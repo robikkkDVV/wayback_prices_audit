@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Новый проект — Wayback Audit{% endblock %}
+
+{% block content %}
+<div class="new-project-page">
+
+    <div class="page-head page-head--centered">
+        <h1>Новый проект</h1>
+        <p class="page-sub">
+            Выберите сценарий: разобрать один товар или загрузить целый реестр.
+        </p>
+    </div>
+
+    <div class="scenario-card">
+        <!-- ВКЛАДКИ -->
+        <div class="tabs" role="tablist">
+            <button type="button" class="tab active" data-tab="single" role="tab">
+                <span class="tab-icon">🎯</span>
+                <span class="tab-label">
+                    <span class="tab-title">Один товар</span>
+                    <span class="tab-desc">Проверить историю цены конкретной позиции</span>
+                </span>
+            </button>
+            <button type="button" class="tab" data-tab="registry" role="tab">
+                <span class="tab-icon">📋</span>
+                <span class="tab-label">
+                    <span class="tab-title">Реестр товаров</span>
+                    <span class="tab-desc">Загрузить файл со списком URL и цен</span>
+                </span>
+            </button>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" class="form">
+            <input type="hidden" name="scenario" id="scenario-input" value="single">
+
+            <!-- ОБЩИЕ ПОЛЯ -->
+            <div class="form-row">
+                <div class="field">
+                    <label for="name">Название проекта</label>
+                    <input type="text" id="name" name="name" required
+                           placeholder="например: royal-rus-2026" autofocus>
+                    <div class="hint">Только латиница, цифры и дефис.</div>
+                </div>
+
+                <div class="field">
+                    <label for="from_date">С какой даты собирать</label>
+                    <input type="text" id="from_date" name="from_date" value="2020-01-01">
+                    <div class="hint">Формат ГГГГ-ММ-ДД.</div>
+                </div>
+
+                <div class="field">
+                    <label for="excel">Имя Excel-файла</label>
+                    <input type="text" id="excel" name="excel" value="report.xlsx">
+                </div>
+            </div>
+
+            <!-- СЦЕНАРИЙ 1: ОДИН ТОВАР -->
+            <div class="tab-panel active" data-panel="single">
+                <div class="field">
+                    <label for="url">Ссылка на страницу товара</label>
+                    <input type="text" id="url" name="url"
+                           placeholder="https://royal-rus.ru/bytovye-konditsionery/...">
+                    <div class="hint">
+                        URL страницы товара на сайте, который хотите проверить.
+                    </div>
+                </div>
+            </div>
+
+            <!-- СЦЕНАРИЙ 2: РЕЕСТР -->
+            <div class="tab-panel" data-panel="registry">
+                <div class="field">
+                    <label for="input_file">Файл со списком URL</label>
+                    <input type="file" id="input_file" name="input_file"
+                           accept=".csv,.xlsx,.xlsm">
+                    <div class="hint">
+                        CSV или XLSX. Колонки: <code>url</code>,
+                        <code>name</code> (опц.),
+                        <code>current_price</code> (опц.).
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <a href="/" class="btn btn-ghost">Отмена</a>
+                <button type="submit" class="btn btn-primary btn-large">
+                    Запустить сбор
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    const tabs = document.querySelectorAll('.tab');
+    const panels = document.querySelectorAll('.tab-panel');
+    const scenarioInput = document.getElementById('scenario-input');
+
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const target = tab.dataset.tab;
+
+            tabs.forEach(t => t.classList.toggle('active', t === tab));
+            panels.forEach(p => {
+                p.classList.toggle('active', p.dataset.panel === target);
+            });
+            scenarioInput.value = target;
+
+            const urlField = document.getElementById('url');
+            const fileField = document.getElementById('input_file');
+            if (target === 'single') {
+                urlField.required = true;
+                fileField.required = false;
+            } else {
+                urlField.required = false;
+                fileField.required = true;
+            }
+        });
+    });
+</script>
+{% endblock %}

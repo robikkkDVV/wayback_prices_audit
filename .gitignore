@@ -1,0 +1,63 @@
+﻿# === Секреты ===
+.env
+.env.local
+*.key
+secrets/
+
+# === Виртуальное окружение ===
+.venv/
+venv/
+env/
+ENV/
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === Тесты ===
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# === Данные проектов ===
+data/
+!data/.gitkeep
+!data/_recipes_cache/.gitkeep
+
+# === Логи ===
+*.log
+logs/
+
+# === Результаты ===
+exports/
+*.xlsx
+*.xlsm
+*.csv
+!requirements.txt
+
+# === Отладка ===
+debug_*.py
+check_*.py
+test_*.py
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini

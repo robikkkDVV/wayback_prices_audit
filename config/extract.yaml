@@ -1,0 +1,10 @@
+﻿parallelism: 3
+save_every: 5
+pause_between_requests: 0.5
+
+extract_fields:
+  - product
+  - price
+  - description
+  - specifications
+  - images

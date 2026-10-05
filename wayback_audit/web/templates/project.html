@@ -1,0 +1,712 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — Wayback Audit{% endblock %}
+
+{% block content %}
+<div class="project-header">
+    <div>
+        <a href="/" class="back-link">← Все проекты</a>
+        <h1>{{ name }}</h1>
+        <div class="target-line">{{ target }}</div>
+    </div>
+    <div class="header-actions">
+        {% if task and task.status == 'running' %}
+            <button type="button" class="btn btn-ghost" id="btn-stop" data-project="{{ name }}">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                     xmlns="http://www.w3.org/2000/svg"
+                     style="vertical-align: -2px; margin-right: 6px;">
+                    <rect x="3" y="2" width="3" height="10" rx="0.5" fill="currentColor"/>
+                    <rect x="8" y="2" width="3" height="10" rx="0.5" fill="currentColor"/>
+                </svg>
+                Остановить
+            </button>
+            <button type="button" class="btn btn-ghost" id="btn-restart" data-project="{{ name }}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2.2"
+                     stroke-linecap="round" stroke-linejoin="round"
+                     style="vertical-align: -2px; margin-right: 6px;">
+                    <path d="M21 2v6h-6"/>
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                    <path d="M3 22v-6h6"/>
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                </svg>
+                Перезапустить
+            </button>
+        {% elif task and task.status == 'stopped' %}
+            {% if task.can_resume %}
+                <button type="button" class="btn btn-primary" id="btn-resume" data-project="{{ name }}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2.2"
+                         stroke-linecap="round" stroke-linejoin="round"
+                         style="vertical-align: -2px; margin-right: 6px;">
+                        <polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/>
+                    </svg>
+                    Продолжить
+                </button>
+            {% endif %}
+            <button type="button" class="btn btn-ghost" id="btn-restart" data-project="{{ name }}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2.2"
+                     stroke-linecap="round" stroke-linejoin="round"
+                     style="vertical-align: -2px; margin-right: 6px;">
+                    <path d="M21 2v6h-6"/>
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                    <path d="M3 22v-6h6"/>
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                </svg>
+                Заново
+            </button>
+        {% endif %}
+
+        <button type="button" class="btn btn-ghost" id="btn-logs">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round"
+                 style="vertical-align: -2px; margin-right: 6px;">
+                <polyline points="4 17 10 11 4 5"/>
+                <line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+            Логи
+        </button>
+
+        {% for f in excel_files %}
+            <a href="/project/{{ name }}/download/{{ f }}" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2.2"
+                     stroke-linecap="round" stroke-linejoin="round"
+                     style="vertical-align: -2px; margin-right: 6px;">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Скачать {{ f }}
+            </a>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="banner banner-running" id="banner" style="display:none;">
+    <div class="spinner"></div>
+    <div>
+        <div class="banner-title">Идёт обработка</div>
+        <div class="banner-sub" id="banner-sub">—</div>
+    </div>
+</div>
+<div class="banner banner-failed" id="banner-failed" style="display:none;">
+    <div class="banner-title">Прервано</div>
+    <div class="banner-sub" id="banner-failed-sub">Процесс не активен.</div>
+</div>
+<div class="banner banner-done" id="banner-done" style="display:none;">
+    <div class="banner-title">Готово</div>
+    <div class="banner-sub">Excel собран — скачайте его кнопкой справа.</div>
+</div>
+<div class="banner banner-stopped" id="banner-stopped" style="display:none;">
+    <div class="banner-title">Остановлено</div>
+    <div class="banner-sub">Процесс не активен. Можно продолжить или перезапустить.</div>
+</div>
+
+<div class="steps" id="steps">
+    {% set step_list = [
+        ('step0',   'Разбор входного файла',   'Читаем список URL и цен'),
+        ('step1',   'Сбор снимков из архива',  'Запрос к Wayback Machine CDX'),
+        ('step2',   'Скачивание HTML',         'Забираем сохранённые страницы'),
+        ('step2_5', 'Обучение рецепта',        'LLM изучает структуру сайта'),
+        ('step3',   'Парсинг данных',          'Извлекаем цены и названия'),
+        ('step4',   'Сборка Excel',            'Готовим итоговый файл')
+    ] %}
+    {% for key, title, desc in step_list %}
+    {% set s = progress[key] %}
+    <div class="step-card step-{{ s.status }}" data-step="{{ key }}">
+        <div class="step-num">{{ loop.index }}</div>
+        <div class="step-body">
+            <div class="step-title">{{ title }}</div>
+            <div class="step-desc">{{ desc }}</div>
+            <div class="step-detail">{{ s.detail }}</div>
+        </div>
+        <div class="step-icon">
+            {% if s.status == 'done' %}
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                     stroke="#22a55e" stroke-width="3"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
+            {% elif s.status == 'running' %}
+                <div class="spinner-sm"></div>
+            {% else %}
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                     stroke="#a0a0a8" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="8"/>
+                </svg>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if excel_files %}
+<div class="download-block">
+    <h2>Результат</h2>
+    <p class="muted">Excel-файл со всеми найденными товарами и их ценами по датам.</p>
+    <div class="download-list">
+        {% for f in excel_files %}
+        <a href="/project/{{ name }}/download/{{ f }}" class="download-card">
+            <span class="download-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
+                     stroke="#ff6b00" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="8" y1="13" x2="16" y2="13"/>
+                    <line x1="8" y1="17" x2="16" y2="17"/>
+                </svg>
+            </span>
+            <span class="download-name">{{ f }}</span>
+            <span class="download-action">Скачать →</span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- ============ АНАЛИТИЧЕСКАЯ СПРАВКА ============ -->
+<div class="analytics-block" id="analytics-block" style="display:none;">
+    <h2>Аналитическая справка</h2>
+    <p class="muted">Динамика изменения цены по данным архива Wayback Machine.</p>
+
+    <div class="analytics-search" id="analytics-search-wrap" style="display:none;">
+        <label for="analytics-search">Поиск товара:</label>
+        <input type="text" id="analytics-search" placeholder="Начните вводить название или URL..." autocomplete="off">
+        <div class="analytics-search-results" id="analytics-search-results" style="display:none;"></div>
+    </div>
+
+    <div class="analytics-card" id="analytics-card">
+        <div class="analytics-summary" id="analytics-summary"></div>
+        <div class="analytics-chart-wrap">
+            <canvas id="analytics-chart" width="900" height="380"></canvas>
+        </div>
+        <div class="analytics-table" id="analytics-table"></div>
+    </div>
+
+    <div class="analytics-empty" id="analytics-empty" style="display:none;">
+        Нет данных о ценах — возможно, парсинг не нашёл цены на страницах.
+    </div>
+</div>
+
+<!-- ============ ПАНЕЛЬ ЛОГОВ ============ -->
+<div class="logs-panel" id="logs-panel">
+    <div class="logs-panel__header">
+        <div class="logs-panel__title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"
+                 style="vertical-align: -2px; margin-right: 8px;">
+                <polyline points="4 17 10 11 4 5"/>
+                <line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+            Логи выполнения
+            <span class="logs-panel__meta" id="logs-meta"></span>
+        </div>
+        <div class="logs-panel__actions">
+            <label class="logs-panel__checkbox">
+                <input type="checkbox" id="logs-autoscroll" checked>
+                Автопрокрутка
+            </label>
+            <button type="button" class="logs-panel__close" id="btn-logs-close" title="Закрыть">✕</button>
+        </div>
+    </div>
+    <div class="logs-panel__body" id="logs-body">
+        <pre class="logs-panel__pre" id="logs-pre"></pre>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+<script>
+(function () {
+    const projectName = {{ name|tojson }};
+    let pollTimer = null;
+    let currentStatus = null;
+
+    async function refreshStatus() {
+        try {
+            const r = await fetch(`/project/${encodeURIComponent(projectName)}/status`);
+            const data = await r.json();
+
+            const status = data.task ? data.task.status : null;
+            const step = data.task ? data.task.step : 0;
+            const stepName = data.task ? data.task.step_name : '';
+
+            const banners = {
+                running: document.getElementById('banner'),
+                failed:  document.getElementById('banner-failed'),
+                done:    document.getElementById('banner-done'),
+                stopped: document.getElementById('banner-stopped'),
+            };
+            Object.values(banners).forEach(b => { if (b) b.style.display = 'none'; });
+
+            if (status === 'running' && banners.running) {
+                banners.running.style.display = 'flex';
+                const sub = document.getElementById('banner-sub');
+                if (sub) sub.textContent = `Этап ${step + 1} из 6 · ${stepName}`;
+            } else if (status === 'done' && banners.done) {
+                banners.done.style.display = 'flex';
+            } else if (status === 'stopped' && banners.stopped) {
+                banners.stopped.style.display = 'flex';
+            } else if (status === 'failed' && banners.failed) {
+                banners.failed.style.display = 'flex';
+            }
+
+            if (data.progress) {
+                for (const [key, s] of Object.entries(data.progress)) {
+                    const card = document.querySelector(`[data-step="${key}"]`);
+                    if (!card) continue;
+                    card.className = `step-card step-${s.status}`;
+                    const detail = card.querySelector('.step-detail');
+                    if (detail) detail.textContent = s.detail || '';
+                    const icon = card.querySelector('.step-icon');
+                    if (icon) {
+                        if (s.status === 'done') {
+                            icon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22a55e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+                        } else if (s.status === 'running') {
+                            icon.innerHTML = '<div class="spinner-sm"></div>';
+                        } else {
+                            icon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a0a0a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/></svg>';
+                        }
+                    }
+                }
+            }
+
+            if (currentStatus !== null && currentStatus !== status
+                && (status === 'done' || status === 'stopped' || status === 'failed')) {
+                clearInterval(pollTimer);
+                setTimeout(() => location.reload(), 1500);
+            }
+            currentStatus = status;
+        } catch (e) {
+            console.error('refreshStatus error:', e);
+        }
+    }
+
+    pollTimer = setInterval(refreshStatus, 3000);
+    refreshStatus();
+
+    // === Кнопка «Остановить» ===
+    const btnStop = document.getElementById('btn-stop');
+    if (btnStop) {
+        btnStop.addEventListener('click', async () => {
+            if (!confirm('Остановить обработку проекта?')) return;
+            btnStop.disabled = true;
+            const original = btnStop.innerHTML;
+            btnStop.innerHTML = 'Останавливаю...';
+            try {
+                const r = await fetch(`/project/${encodeURIComponent(projectName)}/stop`, { method: 'POST' });
+                const data = await r.json();
+                if (data.ok) location.reload();
+                else { alert('Не удалось остановить: ' + (data.error || '?')); btnStop.disabled = false; btnStop.innerHTML = original; }
+            } catch (e) { alert('Ошибка сети: ' + e); btnStop.disabled = false; btnStop.innerHTML = original; }
+        });
+    }
+
+    // === Кнопка «Перезапустить» ===
+    const btnRestart = document.getElementById('btn-restart');
+    if (btnRestart) {
+        btnRestart.addEventListener('click', async () => {
+            if (!confirm('Перезапустить проект? Все промежуточные результаты будут удалены.')) return;
+            btnRestart.disabled = true;
+            const original = btnRestart.innerHTML;
+            btnRestart.innerHTML = 'Перезапускаю...';
+            try {
+                const r = await fetch(`/project/${encodeURIComponent(projectName)}/restart`, { method: 'POST' });
+                const data = await r.json();
+                if (data.ok) location.reload();
+                else { alert('Не удалось перезапустить: ' + (data.error || '?')); btnRestart.disabled = false; btnRestart.innerHTML = original; }
+            } catch (e) { alert('Ошибка сети: ' + e); btnRestart.disabled = false; btnRestart.innerHTML = original; }
+        });
+    }
+
+    // === Кнопка «Продолжить» ===
+    const btnResume = document.getElementById('btn-resume');
+    if (btnResume) {
+        btnResume.addEventListener('click', async () => {
+            if (!confirm('Продолжить с места остановки?')) return;
+            btnResume.disabled = true;
+            const original = btnResume.innerHTML;
+            btnResume.innerHTML = 'Запускаю...';
+            try {
+                const r = await fetch(`/project/${encodeURIComponent(projectName)}/resume`, { method: 'POST' });
+                const data = await r.json();
+                if (data.ok) location.reload();
+                else { alert('Не удалось продолжить: ' + (data.error || '?')); btnResume.disabled = false; btnResume.innerHTML = original; }
+            } catch (e) { alert('Ошибка сети: ' + e); btnResume.disabled = false; btnResume.innerHTML = original; }
+        });
+    }
+
+    // === ПАНЕЛЬ ЛОГОВ ===
+    const logsPanel = document.getElementById('logs-panel');
+    const logsPre = document.getElementById('logs-pre');
+    const logsMeta = document.getElementById('logs-meta');
+    const logsBody = document.getElementById('logs-body');
+    const logsAutoscroll = document.getElementById('logs-autoscroll');
+    const btnLogs = document.getElementById('btn-logs');
+    const btnLogsClose = document.getElementById('btn-logs-close');
+
+    let logsTimer = null;
+    let lastSize = null;
+    let totalLines = 0;
+    let lastModified = null;
+
+    function openLogs() {
+        logsPanel.classList.add('logs-panel--open');
+        lastSize = null;
+        totalLines = 0;
+        logsPre.textContent = '';
+        fetchLogs();
+        logsTimer = setInterval(fetchLogs, 2000);
+    }
+
+    function closeLogs() {
+        logsPanel.classList.remove('logs-panel--open');
+        if (logsTimer) { clearInterval(logsTimer); logsTimer = null; }
+    }
+
+    async function fetchLogs() {
+        try {
+            const params = new URLSearchParams();
+            if (lastSize === null) params.set('tail', '500');
+            else params.set('after', String(lastSize));
+
+            const r = await fetch(`/project/${encodeURIComponent(projectName)}/logs?${params.toString()}`);
+            const data = await r.json();
+            if (!data.ok) return;
+
+            if (data.mode === 'tail') {
+                logsPre.textContent = data.lines.join('\n');
+                totalLines = data.total_lines || data.lines.length;
+                lastSize = data.size;
+                lastModified = data.modified;
+                updateMeta(lastModified, totalLines);
+                if (logsAutoscroll.checked) logsBody.scrollTop = logsBody.scrollHeight;
+                return;
+            }
+            if (data.mode === 'incremental') {
+                lastSize = data.size;
+                if (data.modified) lastModified = data.modified;
+                if (!data.lines || data.lines.length === 0) {
+                    updateMeta(lastModified, totalLines);
+                    return;
+                }
+                logsPre.appendChild(document.createTextNode('\n' + data.lines.join('\n')));
+                totalLines += data.lines.length;
+                updateMeta(lastModified, totalLines);
+                if (logsAutoscroll.checked) logsBody.scrollTop = logsBody.scrollHeight;
+                return;
+            }
+            if (data.mode === 'empty') { updateMeta(null, 0); return; }
+        } catch (e) { console.error('fetchLogs error:', e); }
+    }
+
+    function updateMeta(modified, lines) {
+        if (!modified) { logsMeta.textContent = ''; return; }
+        logsMeta.textContent = `· обновлено: ${modified} · строк: ${lines}`;
+    }
+
+    if (btnLogs) {
+        btnLogs.addEventListener('click', () => {
+            if (logsPanel.classList.contains('logs-panel--open')) closeLogs();
+            else openLogs();
+        });
+    }
+    if (btnLogsClose) {
+        btnLogsClose.addEventListener('click', closeLogs);
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && logsPanel.classList.contains('logs-panel--open')) closeLogs();
+    });
+
+    // ============================================================
+    //  АНАЛИТИЧЕСКАЯ СПРАВКА
+    // ============================================================
+
+    let analyticsData = null;
+    let currentProductIdx = 0;
+    let chartInstance = null;
+
+    function formatPrice(v, currency) {
+        if (v === null || v === undefined) return '—';
+        const s = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v);
+        const cur = currency === 'RUB' ? '₽' : (currency || '');
+        return `${s} ${cur}`.trim();
+    }
+
+    function formatPct(v) {
+        if (v === null || v === undefined) return '—';
+        const sign = v > 0 ? '+' : '';
+        return `${sign}${v}%`;
+    }
+
+    async function loadAnalytics() {
+        try {
+            const r = await fetch(`/project/${encodeURIComponent(projectName)}/analytics`);
+            const data = await r.json();
+            if (!data.ok) return;
+
+            if (!data.products || data.products.length === 0) {
+                document.getElementById('analytics-block').style.display = 'none';
+                return;
+            }
+
+            analyticsData = data;
+            document.getElementById('analytics-block').style.display = 'block';
+            document.getElementById('analytics-card').style.display = 'block';
+
+            const searchWrap = document.getElementById('analytics-search-wrap');
+            if (data.products.length > 1) {
+                searchWrap.style.display = 'block';
+                setupSearch();
+            } else {
+                searchWrap.style.display = 'none';
+            }
+            renderProduct(0);
+        } catch (e) {
+            console.error('loadAnalytics error:', e);
+        }
+    }
+
+    function renderProduct(idx) {
+        if (!analyticsData || idx < 0 || idx >= analyticsData.products.length) return;
+        currentProductIdx = idx;
+        const p = analyticsData.products[idx];
+
+        const summaryHtml = `
+            <div class="analytics-summary__row">
+                <div class="analytics-summary__label">Ссылка</div>
+                <div class="analytics-summary__value">
+                    <a href="${p.url}" target="_blank" rel="noopener">${p.url}</a>
+                </div>
+            </div>
+            <div class="analytics-summary__row">
+                <div class="analytics-summary__label">Наименование</div>
+                <div class="analytics-summary__value">${escapeHtml(p.name || '—')}</div>
+            </div>
+            <div class="analytics-summary__metrics">
+                <div class="metric">
+                    <div class="metric__label">Период</div>
+                    <div class="metric__value">${p.period_from} → ${p.period_to}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric__label">Снимков</div>
+                    <div class="metric__value">${p.points_count}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric__label">Цена мин / макс</div>
+                    <div class="metric__value">${formatPrice(p.price_min, p.currency)} / ${formatPrice(p.price_max, p.currency)}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric__label">Изменение за период</div>
+                    <div class="metric__value ${p.change_pct > 0 ? 'up' : (p.change_pct < 0 ? 'down' : '')}">${formatPct(p.change_pct)}</div>
+                </div>
+                ${p.input_price ? `
+                <div class="metric">
+                    <div class="metric__label">Входная цена</div>
+                    <div class="metric__value">${formatPrice(p.input_price, p.currency)}</div>
+                </div>
+                <div class="metric">
+                    <div class="metric__label">Расхождение с входной</div>
+                    <div class="metric__value ${p.diff_from_input > 0 ? 'up' : (p.diff_from_input < 0 ? 'down' : '')}">${formatPct(p.diff_from_input)}</div>
+                </div>
+                ` : ''}
+            </div>
+        `;
+        document.getElementById('analytics-summary').innerHTML = summaryHtml;
+
+        renderChart(p);
+        renderTable(p);
+    }
+
+    function renderChart(p) {
+        const ctx = document.getElementById('analytics-chart').getContext('2d');
+
+        const dataPoints = p.points
+            .filter(pt => pt.price !== null && pt.date)
+            .map(pt => ({
+                x: new Date(pt.date).getTime(),
+                y: pt.price,
+                date: pt.date,
+                timestamp: pt.timestamp,
+            }))
+            .sort((a, b) => a.x - b.x);
+
+        const datasets = [{
+            label: 'Цена',
+            data: dataPoints,
+            borderColor: '#ff6b00',
+            backgroundColor: 'rgba(255, 107, 0, 0.12)',
+            borderWidth: 2.5,
+            pointRadius: 5,
+            pointHoverRadius: 8,
+            pointBackgroundColor: '#ff6b00',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 2,
+            tension: 0.15,
+            fill: true,
+        }];
+
+        if (p.input_price) {
+            datasets.push({
+                label: 'Входная цена',
+                data: dataPoints.map(pt => ({ x: pt.x, y: p.input_price })),
+                borderColor: '#2563eb',
+                borderWidth: 1.5,
+                borderDash: [6, 4],
+                pointRadius: 0,
+                fill: false,
+                tension: 0,
+            });
+        }
+
+        if (chartInstance) chartInstance.destroy();
+
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'nearest', intersect: false },
+                plugins: {
+                    legend: { display: true, position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => items[0].raw.date || '',
+                            label: (item) => `${item.dataset.label}: ${formatPrice(item.raw.y, p.currency)}`,
+                            afterBody: (items) => items[0] && items[0].raw.timestamp
+                                ? `Снимок: ${items[0].raw.timestamp}` : ''
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'month',
+                            displayFormats: { month: 'LLL yyyy' },
+                            tooltipFormat: 'dd.MM.yyyy',
+                        },
+                        title: { display: true, text: 'Дата снимка' },
+                        grid: { color: 'rgba(0,0,0,0.05)' },
+                        ticks: {
+                            autoSkip: true,
+                            maxTicksLimit: 12,
+                            maxRotation: 45,
+                            minRotation: 45,
+                        },
+                    },
+                    y: {
+                        title: { display: true, text: 'Цена' },
+                        grid: { color: 'rgba(0,0,0,0.05)' },
+                        ticks: { callback: (v) => new Intl.NumberFormat('ru-RU').format(v) }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderTable(p) {
+        const rows = p.points
+            .filter(pt => pt.price !== null)
+            .map((pt, i, arr) => {
+                const prev = i > 0 ? arr[i - 1].price : null;
+                const diff = prev !== null && prev > 0
+                    ? ((pt.price - prev) / prev * 100).toFixed(1)
+                    : null;
+                const diffClass = diff === null ? ''
+                    : (parseFloat(diff) > 0 ? 'up' : (parseFloat(diff) < 0 ? 'down' : ''));
+                const waybackUrl = `https://web.archive.org/web/${pt.timestamp}/${p.url}`;
+                return `
+                    <tr>
+                        <td>${pt.date}</td>
+                        <td class="num">${formatPrice(pt.price, p.currency)}</td>
+                        <td class="num ${diffClass}">${diff !== null ? formatPct(diff) : '—'}</td>
+                        <td><a href="${waybackUrl}" target="_blank" rel="noopener">открыть</a></td>
+                    </tr>
+                `;
+            })
+            .join('');
+
+        document.getElementById('analytics-table').innerHTML = `
+            <table class="analytics-table__inner">
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th class="num">Цена</th>
+                        <th class="num">Δ от пред.</th>
+                        <th>Снимок</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    }
+
+    function setupSearch() {
+        const input = document.getElementById('analytics-search');
+        const results = document.getElementById('analytics-search-results');
+
+        function doSearch() {
+            const q = input.value.trim().toLowerCase();
+            if (!q) { results.style.display = 'none'; return; }
+            const matches = analyticsData.products
+                .map((p, i) => ({ p, i }))
+                .filter(({ p }) =>
+                    (p.name || '').toLowerCase().includes(q)
+                    || (p.url || '').toLowerCase().includes(q)
+                    || (p.input_name || '').toLowerCase().includes(q)
+                )
+                .slice(0, 20);
+
+            if (matches.length === 0) {
+                results.innerHTML = '<div class="analytics-search-results__empty">Ничего не найдено</div>';
+            } else {
+                results.innerHTML = matches.map(({ p, i }) => `
+                    <div class="analytics-search-results__item" data-idx="${i}">
+                        <div class="analytics-search-results__name">${escapeHtml(p.name || p.url)}</div>
+                        <div class="analytics-search-results__meta">${p.points_count} снимков · ${formatPrice(p.price_last, p.currency)}</div>
+                    </div>
+                `).join('');
+            }
+            results.style.display = 'block';
+
+            results.querySelectorAll('.analytics-search-results__item').forEach(el => {
+                el.addEventListener('click', () => {
+                    const idx = parseInt(el.dataset.idx, 10);
+                    renderProduct(idx);
+                    input.value = '';
+                    results.style.display = 'none';
+                });
+            });
+        }
+
+        input.addEventListener('input', doSearch);
+        input.addEventListener('focus', doSearch);
+        document.addEventListener('click', (e) => {
+            if (!input.contains(e.target) && !results.contains(e.target)) {
+                results.style.display = 'none';
+            }
+        });
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;',
+            '"': '&quot;', "'": '&#39;',
+        }[c]));
+    }
+
+    const HAS_EXCEL = {{ 'true' if excel_files else 'false' }};
+    if (HAS_EXCEL) {
+        loadAnalytics();
+    }
+})();
+</script>
+{% endblock %}

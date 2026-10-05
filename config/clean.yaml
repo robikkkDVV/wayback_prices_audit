@@ -1,0 +1,17 @@
+﻿remove_tags:
+  - script
+  - style
+  - noscript
+  - iframe
+  - svg
+
+remove_selectors:
+  - ".cookie"
+  - ".modal"
+  - ".popup"
+  - "header nav"
+  - "footer"
+
+collapse_whitespace: true
+max_chars: 80000
+truncate_strategy: middle

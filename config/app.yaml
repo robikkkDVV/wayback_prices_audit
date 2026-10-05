@@ -1,0 +1,15 @@
+app
+  name Wayback Audit
+  data_dir data
+
+defaults
+  from_year 2013
+  to_year 2026
+  request_delay 3.0
+  max_retries 5
+
+pipeline
+  step1_enabled true
+  step2_enabled true
+  step3_enabled true
+  step4_enabled true

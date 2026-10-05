@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Проекты — Wayback Audit{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <h1>Мои проекты</h1>
+    <p class="page-sub">Каждый проект — отдельный сайт, который вы собираете из веб-архива.</p>
+</div>
+
+{% if projects %}
+<div class="cards">
+    {% for p in projects %}
+    <div class="project-card-wrapper">
+        <a href="/project/{{ p.name }}" class="project-card">
+            <div class="card-head">
+                <div class="card-name">{{ p.name }}</div>
+                <span class="status status-{{ p.status[0] }}">{{ p.status[1] }}</span>
+            </div>
+
+            <div class="card-target">{{ p.target }}</div>
+
+            <div class="mini-steps">
+                {% for key, s in p.progress.items() %}
+                    <div class="mini-step {{ s.status }}"></div>
+                {% endfor %}
+            </div>
+
+            <div class="card-foot">
+                {% if p.has_excel %}
+                    <span class="muted small">📊 {{ p.excel }}</span>
+                {% elif p.task and p.task.status == 'running' %}
+                    <span class="muted small">{{ p.task.step_name }}</span>
+                {% else %}
+                    <span class="muted small">нет данных</span>
+                {% endif %}
+            </div>
+        </a>
+
+        <button type="button"
+                class="card-delete"
+                data-project="{{ p.name }}"
+                title="Удалить проект">
+            🗑
+        </button>
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+document.querySelectorAll('.card-delete').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const name = btn.dataset.project;
+        const ok = confirm(
+            `Удалить проект "${name}"?\n\n` +
+            `Все скачанные снимки, рецепты и Excel будут удалены безвозвратно.`
+        );
+        if (!ok) return;
+
+        btn.disabled = true;
+        btn.textContent = '⏳';
+
+        try {
+            const r = await fetch(`/project/${name}/delete`, { method: 'POST' });
+            const data = await r.json();
+            if (data.ok) {
+                const wrapper = btn.closest('.project-card-wrapper');
+                wrapper.style.transition = 'opacity .3s, transform .3s';
+                wrapper.style.opacity = '0';
+                wrapper.style.transform = 'scale(0.95)';
+                setTimeout(() => wrapper.remove(), 300);
+            } else {
+                alert('Ошибка удаления: ' + (data.error || 'неизвестная'));
+                btn.disabled = false;
+                btn.textContent = '🗑';
+            }
+        } catch (err) {
+            alert('Ошибка сети: ' + err);
+            btn.disabled = false;
+            btn.textContent = '🗑';
+        }
+    });
+});
+</script>
+
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">🗂</div>
+    <h2>Пока пусто</h2>
+    <p class="muted">Создайте первый проект — укажите сайт, который хотите собрать из веб-архива.</p>
+    <a href="/new" class="btn btn-primary btn-large">Создать первый проект</a>
+</div>
+{% endif %}
+{% endblock %}

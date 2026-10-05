@@ -1,0 +1,18 @@
+﻿model: "deepseek-ai/DeepSeek-V4-Flash"
+temperature: 0
+max_tokens: 4000
+timeout: 120
+
+rate_limit:
+  rpm: 60
+  retry_on_429: 3
+  retry_pause: 5
+
+on_error:
+  retry: 2
+  retry_pause: 3
+
+pricing:
+  "deepseek-ai/DeepSeek-V3":
+    input: 0.14
+    output: 0.28
