@@ -24,8 +24,15 @@ def parse_html(html: str, recipe: dict) -> dict:
     hits = 0
     misses = 0
 
-    for group_name, fields in recipe.get("field_groups", {}).items():
+    field_groups = recipe.get("field_groups") or {}
+
+    for group_name, fields in field_groups.items():
         result[group_name] = {}
+
+        # ЗАЩИТА: если LLM вернул null вместо словаря
+        if not isinstance(fields, dict):
+            continue
+
         for field_name, rules in fields.items():
             value = _extract_field(soup, rules)
             result[group_name][field_name] = value
@@ -333,6 +340,28 @@ def _clean_price(raw):
     except ValueError:
         return None
 
+def _sanitize_price_text(text: str) -> str:
+    """
+    Извлекает ПЕРВОЕ число из текста.
+    Защита от склейки: '6 076 ₽ за 1 шт' → '6 076', а не '60761'.
+    """
+    if not text:
+        return text
+
+    s = str(text)
+
+    # 1. Сначала ищем "нормальное" число с разделителями тысяч
+    #    Пример: "6 076", "60 761", "1 234 567"
+    m = re.search(r"\d{1,3}(?:[\s\u00a0]\d{3})+", s)
+    if m:
+        return m.group(0)
+
+    # 2. Простое число
+    m = re.search(r"\d+", s)
+    if m:
+        return m.group(0)
+
+    return text
 
 def _extract_field(soup, rules):
     selectors = _get_selectors(rules)
@@ -370,6 +399,11 @@ def _extract_field(soup, rules):
                     continue
             except re.error:
                 continue
+
+        # Санитайзер: берём ПЕРВОЕ число из текста
+        if isinstance(val, str):
+            val = _sanitize_price_text(val)
+
         return val
     return fixed_value
 

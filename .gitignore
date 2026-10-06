@@ -2,33 +2,26 @@
 .env
 .env.local
 *.key
-secrets/
 
 # === Виртуальное окружение ===
 .venv/
 venv/
 env/
-ENV/
 
 # === Python ===
 __pycache__/
 *.py[cod]
-*.class
-*.so
-.Python
 build/
 dist/
 *.egg-info/
-.eggs/
 
 # === Jupyter ===
 .ipynb_checkpoints/
 
-# === Тесты ===
+# === Тесты и кэши ===
 .pytest_cache/
 .mypy_cache/
 .coverage
-htmlcov/
 
 # === Данные проектов ===
 data/
@@ -37,10 +30,8 @@ data/
 
 # === Логи ===
 *.log
-logs/
 
 # === Результаты ===
-exports/
 *.xlsx
 *.xlsm
 *.csv
@@ -50,14 +41,14 @@ exports/
 debug_*.py
 check_*.py
 test_*.py
+*.bak
+*.tmp
 
 # === IDE ===
 .vscode/
 .idea/
 *.swp
-*.swo
 
 # === OS ===
 .DS_Store
 Thumbs.db
-desktop.ini

@@ -8,6 +8,10 @@
      (проверяя на соседних снимках).
   5. Добавить рецепт в файл домена (старые НЕ удаляются).
   6. Повторить, максимум MAX_ITERATIONS раз.
+
+Режимы очистки:
+  - Итерация 1 — SMART BLOCK (умный блок через _find_content_block)
+  - Итерация 2+ — FULL BODY (весь <body> без системных тегов)
 """
 import json
 import os
@@ -30,7 +34,7 @@ except ImportError:
     pass
 
 
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 3
 MIN_PRICE_CONFIDENCE = 0.5   # порог, чтобы считать снимок "покрытым"
 
 
@@ -226,10 +230,18 @@ class RecipeLearner:
 #  УМНАЯ ОЧИСТКА HTML
 # ============================================================
 
-def clean_html_for_llm(html: str, clean_cfg: dict = None) -> str:
+def clean_html_for_llm(html: str, clean_cfg: dict = None,
+                       full_body: bool = False) -> str:
+    """
+    Очищает HTML перед отправкой в LLM.
+
+    full_body=False — умный блок (через _find_content_block).
+    full_body=True  — весь <body> без системных тегов.
+    """
     cfg = clean_cfg or {}
     soup = BeautifulSoup(html, "lxml")
 
+    # Сохраняем JSON-LD / application/json с Product/Offer/Price
     preserved_scripts = []
     for script in soup.find_all("script"):
         stype = (script.get("type") or "").lower()
@@ -239,11 +251,18 @@ def clean_html_for_llm(html: str, clean_cfg: dict = None) -> str:
             if any(k in low for k in ["product", "offer", "price", "sku", '"@type"']):
                 preserved_scripts.append(str(script))
 
-    for tag in soup.find_all(["script", "style", "noscript"]):
+    # Удаляем системные теги
+    for tag in soup.find_all(["script", "style", "noscript", "svg", "iframe"]):
         tag.decompose()
-    for tag in soup.find_all(["svg", "iframe"]):
+    # meta оставляем только если itemprop/property
+    for tag in soup.find_all("meta"):
+        keep = tag.get("itemprop") or tag.get("property")
+        if not keep:
+            tag.decompose()
+    for tag in soup.find_all("link"):
         tag.decompose()
 
+    # Пользовательские селекторы из clean.yaml
     for sel in cfg.get("remove_selectors", []):
         try:
             for el in soup.select(sel):
@@ -252,8 +271,16 @@ def clean_html_for_llm(html: str, clean_cfg: dict = None) -> str:
             continue
 
     body = soup.find("body") or soup
-    content_block = _find_content_block(body)
-    text = str(content_block) if content_block is not None else str(body)
+
+    if full_body:
+        # ВЕСЬ <body> без системных тегов
+        text = str(body)
+    else:
+        # Умный блок (как было)
+        content_block = _find_content_block(body)
+        if content_block is not None and len(str(content_block)) < 5000:
+            content_block = None
+        text = str(content_block) if content_block is not None else str(body)
 
     if cfg.get("collapse_whitespace", True):
         text = re.sub(r"\s+", " ", text)
@@ -349,7 +376,6 @@ def _ts_to_date(ts: str) -> str:
 
 
 def _date_to_ts_range(date_iso: str) -> tuple:
-    """Диапазон timestamp-ов для даты в пределах суток."""
     d = date_iso.replace("-", "")
     return f"{d}000000", f"{d}235959"
 
@@ -359,7 +385,6 @@ def _date_to_ts_range(date_iso: str) -> tuple:
 # ============================================================
 
 def _find_recipe_for_snapshot(recipes: list, date_iso: str):
-    """Возвращает рецепт, попадающий в диапазон даты."""
     for r in recipes:
         d_from = r.get("date_from", "")
         d_to = r.get("date_to", "")
@@ -369,7 +394,6 @@ def _find_recipe_for_snapshot(recipes: list, date_iso: str):
 
 
 def _price_found(parsed: dict) -> bool:
-    """Проверяет, найдена ли цена в результате парсинга."""
     if not parsed:
         return False
     data = parsed.get("data") or {}
@@ -378,7 +402,6 @@ def _price_found(parsed: dict) -> bool:
     if current is None:
         return False
     if isinstance(current, str):
-        # пробуем вытащить число
         num_str = "".join(c for c in current if c.isdigit() or c in ".,")
         num_str = num_str.replace(",", ".")
         if not num_str:
@@ -446,10 +469,8 @@ def _learn_for_domain(paths, domain, domain_rows, learner, clean_cfg, logger, fo
         logger.warn(f"   Нет HTML для {sample_url}")
         return {"learned": 0, "skipped": 0, "failed": 1}
 
-    # Сортируем по дате — свежие первыми
     html_files_sorted = sorted(html_files, key=lambda p: p.stem, reverse=True)
 
-    # Загружаем существующие рецепты
     existing_data = recipe_store.load_recipe(domain) if not force else None
     recipes = existing_data.get("recipes", []) if existing_data else []
 
@@ -460,7 +481,6 @@ def _learn_for_domain(paths, domain, domain_rows, learner, clean_cfg, logger, fo
         recipes = []
 
     if not recipes:
-        # Создаём пустой файл для домена
         recipe_store.save_recipe(domain, {
             "domain": domain,
             "created_at": datetime.now().isoformat(),
@@ -471,23 +491,39 @@ def _learn_for_domain(paths, domain, domain_rows, learner, clean_cfg, logger, fo
     learned = 0
     skipped = 0
     failed = 0
+    already_tried = set()   # (stem, mode) — что уже пробовали
 
     for iteration in range(1, MAX_ITERATIONS + 1):
-        logger.info(f"\n   ── Итерация {iteration}/{MAX_ITERATIONS} ──")
+        # Определяем режим очистки для этой итерации
+        use_full_body = (iteration >= 2)
+        mode = "full" if use_full_body else "smart"
+        mode_label = "FULL BODY" if use_full_body else "SMART BLOCK"
+
+        logger.info(f"\n   ── Итерация {iteration}/{MAX_ITERATIONS} ({mode_label}) ──")
 
         # 1. Определяем, какие снимки НЕ покрыты
         uncovered = _find_uncovered_snapshots(
             html_files_sorted, recipes, domain, logger
         )
 
+        # Убираем те, что уже пробовали в этом режиме
+        uncovered = [f for f in uncovered if (f.stem, mode) not in already_tried]
+
         if not uncovered:
-            logger.success(f"   ✅ Все снимки покрыты рецептами")
+            if already_tried:
+                logger.warn(
+                    f"   ⚠️  Не получилось на {len(already_tried)} снимках — "
+                    f"пропускаем домен"
+                )
+            else:
+                logger.success(f"   ✅ Все снимки покрыты рецептами")
             break
 
         logger.info(f"   Непокрытых снимков: {len(uncovered)}")
 
         # 2. Берём самый свежий
         target_file = uncovered[0]
+        already_tried.add((target_file.stem, mode))
         date_iso = _ts_to_date(target_file.stem)
         logger.info(f"   Обучаю на: {target_file.stem} ({date_iso})")
 
@@ -499,15 +535,21 @@ def _learn_for_domain(paths, domain, domain_rows, learner, clean_cfg, logger, fo
             failed += 1
             continue
 
-        clean = clean_html_for_llm(html, clean_cfg)
+        clean = clean_html_for_llm(html, clean_cfg, full_body=use_full_body)
         logger.info(
-            f"   Очистка: {len(html):,} → {len(clean):,} символов "
+            f"   Очистка ({mode_label}): {len(html):,} → {len(clean):,} символов "
             f"({100 - len(clean) / len(html) * 100:.0f}% экономии)"
         )
 
         recipe = learner.learn(clean)
         if not recipe:
             logger.error(f"   LLM не вернул рецепт")
+            failed += 1
+            continue
+
+        fg = recipe.get("field_groups")
+        if not isinstance(fg, dict) or not fg:
+            logger.warn(f"   LLM вернул рецепт без field_groups — пропуск")
             failed += 1
             continue
 
@@ -542,9 +584,6 @@ def _learn_for_domain(paths, domain, domain_rows, learner, clean_cfg, logger, fo
         learned += 1
         logger.success(f"   ✓ Рецепт {recipe_id} добавлен")
 
-    if not uncovered if 'uncovered' in locals() else False:
-        pass
-
     return {"learned": learned, "skipped": skipped, "failed": failed}
 
 
@@ -565,7 +604,6 @@ def _find_uncovered_snapshots(html_files, recipes, domain, logger):
             uncovered.append(html_file)
             continue
 
-        # Рецепт есть — проверяем, находит ли цену
         try:
             html = html_file.read_text(encoding="utf-8")
             parsed = recipe_parser.parse_html(html, recipe)
@@ -578,11 +616,7 @@ def _find_uncovered_snapshots(html_files, recipes, domain, logger):
 
 def _determine_date_range(target_file, all_files, recipe, target_date):
     """
-    Определяет date_from и date_to для нового рецепта:
-      - Проверяет рецепт на снимках СВЕЖЕЕ target_date.
-        Если работает — расширяем date_to вверх.
-      - Проверяет на снимках СТАРЕЕ target_date.
-        Если работает — расширяем date_from вниз.
+    Определяет date_from и date_to для нового рецепта.
     """
     dates_above = []
     dates_below = []
@@ -594,7 +628,6 @@ def _determine_date_range(target_file, all_files, recipe, target_date):
         elif f.stem < target_ts:
             dates_below.append(f)
 
-    # Проверяем свежее
     date_to = target_date
     for f in sorted(dates_above, key=lambda p: p.stem):
         try:
@@ -607,7 +640,6 @@ def _determine_date_range(target_file, all_files, recipe, target_date):
         except Exception:
             break
 
-    # Проверяем старее
     date_from = target_date
     for f in sorted(dates_below, key=lambda p: p.stem, reverse=True):
         try:
@@ -625,6 +657,7 @@ def _determine_date_range(target_file, all_files, recipe, target_date):
 
 def _find_html_for_url(pages_dir: Path, url: str) -> list:
     return find_html_files(pages_dir, url)
+
 
 # ============================================================
 #  РЕЖИМ "РЕЕСТР": обучение ОДНОГО домена

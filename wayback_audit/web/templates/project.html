@@ -445,6 +445,13 @@
         return `${sign}${v}%`;
     }
 
+    function formatDateRu(iso) {
+        // "2025-03-24" → "24.03.2025"
+        if (!iso || iso.length < 10) return iso || '—';
+        const [y, m, d] = iso.split('-');
+        return `${d}.${m}.${y}`;
+    }
+
     async function loadAnalytics() {
         try {
             const r = await fetch(`/project/${encodeURIComponent(projectName)}/analytics`);
@@ -490,10 +497,12 @@
                 <div class="analytics-summary__value">${escapeHtml(p.name || '—')}</div>
             </div>
             <div class="analytics-summary__metrics">
+
                 <div class="metric">
                     <div class="metric__label">Период</div>
-                    <div class="metric__value">${p.period_from} → ${p.period_to}</div>
+                    <div class="metric__value">${formatDateRu(p.period_from)} — ${formatDateRu(p.period_to)}</div>
                 </div>
+
                 <div class="metric">
                     <div class="metric__label">Снимков</div>
                     <div class="metric__value">${p.points_count}</div>
